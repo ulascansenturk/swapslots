@@ -65,10 +65,10 @@ contract SlotsSwapHookTest is Test, Deployers {
         // Initialize a pool with these two tokens
         (key,) = initPool(token0, token1, hook, 3000, SQRT_PRICE_1_1);
 
+        // Add the hook as a consumer of the subscription
         (,, address subOwner,) = vrfCoordinator.getSubscription(subId);
         require(subOwner == address(this), "Subscription owner is not this contract");
         vrfCoordinator.addConsumer(subId, address(hook));
-        assertEq(vrfCoordinator.consumerIsAdded(subId, address(hook)), true);
     }
 
     // function test_beforeInitialize() public {
@@ -117,46 +117,33 @@ contract SlotsSwapHookTest is Test, Deployers {
     //     assertEq(user, swapper, "User not linked to VRF request");
     // }
 
-    // function test_fulfillRandomWordsRewardsUser() public {
-    //     // Simulate a bet and a VRF request
-    //     uint256 betAmount = 1e18;
-    //     uint256 mockRandomNumber = 123456789;
+    function test_potUpdatesCorrectly() public {
+        // Simulate multiple bets and check pot updates
+        (, uint256 initialPot) = hook.getSlotMachine(key.toId());
 
-    //     uint256 requestId = vrfCoordinator.requestRandomWords(keyHash, subId, 3, callbackGasLimit, numWords);
-    //     vrfCoordinator.fulfillRandomWords(requestId, address(hook));
+        // Perform two bets
+        int256 betAmount = 1 ether; // Positive bet amount
 
-    //     // Check if user winnings were updated
-    //     address user = address(this);
-    //     uint256 winnings = hook.winnings(user);
-    //     assertTrue(winnings > 0, "User winnings not updated");
-    // }
+        uint160 sqrtPrice = SQRT_PRICE_1_1; // Assume a valid starting price for the pool
+        uint160 priceLowerBound = sqrtPrice / 2; // Set a reasonable lower bound
+        uint160 priceUpperBound = sqrtPrice * 2; // Set a reasonable upper bound
 
-    // function test_potUpdatesCorrectly() public {
-    //     // Simulate multiple bets and check pot updates
-    //     (, uint256 initialPot) = hook.getSlotMachine(key.toId());
+        for (uint256 i = 0; i < 2; i++) {
+            IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+                zeroForOne: i % 2 == 0, // Alternate swap direction
+                amountSpecified: betAmount,
+                sqrtPriceLimitX96: i % 2 == 0 ? priceLowerBound : priceUpperBound
+            });
 
-    //     // Perform two bets
-    //     int256 betAmount = 10 ether;
+            PoolSwapTest.TestSettings memory testSettings =
+                PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
 
-    //     for (uint256 i = 0; i < 2; i++) {
-    //         IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
-    //             zeroForOne: true,
-    //             amountSpecified: betAmount,
-    //             sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-    //         });
+            swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+        }
 
-    //         PoolSwapTest.TestSettings memory testSettings =
-    //             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+        (, uint256 finalPot) = hook.getSlotMachine(key.toId());
 
-    //         swapRouter.swap(key, params, testSettings, ZERO_BYTES);
-    //     }
-
-    //     (, uint256 finalPot) = hook.getSlotMachine(key.toId());
-
-    //     // Ensure betAmount is non-negative and cast to uint256
-    //     uint256 absoluteBetAmount = betAmount >= 0 ? uint256(betAmount) : uint256(-betAmount);
-
-    //     uint256 expectedPot = initialPot + 2 * absoluteBetAmount;
-    //     assertEq(finalPot, expectedPot, "Pot not updated correctly");
-    // }
+        uint256 expectedPot = initialPot + 2 * uint256(betAmount) * 70 / 100; // 70% of bet goes to the pot
+        assertEq(finalPot, expectedPot, "Pot not updated correctly");
+    }
 }

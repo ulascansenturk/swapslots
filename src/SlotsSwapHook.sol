@@ -95,24 +95,23 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         address sender,
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
-        BalanceDelta swapDelta,
-        bytes calldata hookData
-    ) external override returns (bytes4, int128) {
+        BalanceDelta,
+        bytes calldata
+    ) external override onlyPoolManager returns (bytes4, int128) {
         PoolId poolId = key.toId();
         require(slotMachines[poolId].minBet > 0, "Slot machine not initialized");
-        console.logString("AMOUNT 0");
-        console.logInt(swapDelta.amount1());
-        console.logInt(swapDelta.amount0());
-        console.logString("AMOUNT 0");
+        console.logString("AMOUNT");
+        console.logInt(params.amountSpecified);
+        console.logString("AMOUNT");
 
-        int128 betAmount = swapDelta.amount0() > 0 ? swapDelta.amount0() : swapDelta.amount1();
+        int256 betAmount = params.amountSpecified;
         require(betAmount >= 0, "Bet amount must be non-negative");
 
-        require(uint256(uint128(betAmount)) >= slotMachines[poolId].minBet, "Bet amount too small");
+        require(uint256(betAmount) >= slotMachines[poolId].minBet, "Bet amount too small");
 
-        uint256 potContribution = uint256(uint128(betAmount)) * 70 / 100; // 70% to pot
-        uint256 providerCompensation = uint256(uint128(betAmount)) * 20 / 100; // 20% to providers
-        uint256 casinoFee = uint256(uint128(betAmount)) * 10 / 100; // 10% fee
+        uint256 potContribution = uint256(betAmount) * 70 / 100; // 70% to pot
+        uint256 providerCompensation = uint256(betAmount) * 20 / 100; // 20% to providers
+        uint256 casinoFee = uint256(betAmount) * 10 / 100; // 10% fee
 
         slotMachines[poolId].pot += potContribution;
 
@@ -120,7 +119,7 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         vrfRequests[requestId] = sender; // Map requestId to user
         requestToPoolId[requestId] = poolId; // Map requestId to PoolId
 
-        emit RandomnessRequested(requestId, sender, uint256(uint128(betAmount)));
+        emit RandomnessRequested(requestId, sender, uint256(betAmount));
 
         return (this.afterSwap.selector, 0);
     }
