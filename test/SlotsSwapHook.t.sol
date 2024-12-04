@@ -48,6 +48,10 @@ contract SlotsSwapHookTest is Test, Deployers {
 
         (token0, token1) = deployMintAndApprove2Currencies();
 
+        (,, address subOwner,) = vrfCoordinator.getSubscription(subId);
+
+        require(subOwner == address(this), "Subscription owner is not this contract");
+
         uint160 flags = uint160(Hooks.BEFORE_INITIALIZE_FLAG | Hooks.AFTER_SWAP_FLAG);
         address hookAddress = address(flags);
         deployCodeTo(
@@ -58,6 +62,8 @@ contract SlotsSwapHookTest is Test, Deployers {
 
         hook = SlotsSwapHook(hookAddress);
 
+        vrfCoordinator.addConsumer(subId, address(hook));
+
         // Approve our hook address to spend these tokens as well
         MockERC20(Currency.unwrap(token0)).approve(address(hook), type(uint256).max);
         MockERC20(Currency.unwrap(token1)).approve(address(hook), type(uint256).max);
@@ -66,24 +72,18 @@ contract SlotsSwapHookTest is Test, Deployers {
         (key,) = initPool(token0, token1, hook, 3000, SQRT_PRICE_1_1);
 
         // Add the hook as a consumer of the subscription
-        (,, address subOwner,) = vrfCoordinator.getSubscription(subId);
-        require(subOwner == address(this), "Subscription owner is not this contract");
-        vrfCoordinator.addConsumer(subId, address(hook));
     }
 
-    // function test_beforeInitialize() public {
-    //     // Test the `beforeInitialize` hook
-    //     console.logString("Testing beforeInitialize");
+    function test_beforeInitialize() public {
+        console.logString("Testing beforeInitialize");
 
-    //     manager.initialize(key, SQRT_PRICE_1_1);
+        // Check if slot machine was initialized
+        PoolId poolId = key.toId();
+        (uint256 minBet, uint256 pot) = hook.getSlotMachine(poolId);
 
-    //     // Check if slot machine was initialized
-    //     PoolId poolId = key.toId();
-    //     (uint256 minBet, uint256 pot) = hook.getSlotMachine(poolId);
-
-    //     assertEq(minBet, 1e6, "Slot machine not initialized correctly");
-    //     assertEq(pot, 0, "Initial pot is not 0");
-    // }
+        assertEq(minBet, 0.001 ether, "Slot machine not initialized correctly");
+        assertEq(pot, 10e6, "Initial pot is not 0");
+    }
 
     // function test_afterSwapTriggersVRFRequest() public {
     //     // Simulate a swap triggering a bet

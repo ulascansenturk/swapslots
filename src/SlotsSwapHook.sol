@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
-
 import "./CasinoLib.sol";
 import {BaseHook} from "v4-periphery/src/base/hooks/BaseHook.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
@@ -27,6 +24,8 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
     mapping(address => uint256) public userLosses; // User losses
     mapping(uint256 => address) public vrfRequests; // Map VRF requestId to user
     mapping(uint256 => PoolId) public requestToPoolId; // Map VRF requestId to PoolId
+
+    uint256 public lastRequestId;
 
     event RandomnessRequested(uint256 indexed requestId, address indexed user, uint256 betAmount);
     event RandomnessFulfilled(uint256 indexed requestId, address indexed user, uint256 payout);
@@ -71,24 +70,11 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         returns (bytes4)
     {
         PoolId poolId = key.toId();
-        require(slotMachines[poolId].minBet == 0, "Slot machine already initialized");
-
-        slotMachines[poolId] = CasinoLib.SlotMachine({
-            minBet: 0.001 ether,
-            pot: 10e6 // Initial pot seeding
-        });
+        if (slotMachines[poolId].minBet == 0) {
+            slotMachines[poolId] = CasinoLib.SlotMachine({minBet: 0.001 ether, pot: 10e6});
+        }
 
         return this.beforeInitialize.selector;
-    }
-
-    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
-        external
-        override
-        returns (bytes4)
-    {
-        PoolId poolId = key.toId();
-        require(slotMachines[poolId].minBet > 0, "Slot machine not initialized in beforeInitialize");
-        return this.afterInitialize.selector;
     }
 
     function afterSwap(
@@ -100,9 +86,6 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
     ) external override onlyPoolManager returns (bytes4, int128) {
         PoolId poolId = key.toId();
         require(slotMachines[poolId].minBet > 0, "Slot machine not initialized");
-        console.logString("AMOUNT");
-        console.logInt(params.amountSpecified);
-        console.logString("AMOUNT");
 
         int256 betAmount = params.amountSpecified;
         require(betAmount >= 0, "Bet amount must be non-negative");
@@ -118,6 +101,7 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         uint256 requestId = COORDINATOR.requestRandomWords(keyHash, subscriptionId, 3, callbackGasLimit, 1);
         vrfRequests[requestId] = sender; // Map requestId to user
         requestToPoolId[requestId] = poolId; // Map requestId to PoolId
+        lastRequestId = requestId;
 
         emit RandomnessRequested(requestId, sender, uint256(betAmount));
 
@@ -141,7 +125,6 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
             if (CasinoLib.isJackpot(rollValue)) {
                 uint256 providerCompensation = payout / 10; // 10% to providers
                 winnings[user] += payout - providerCompensation;
-                compensateLiquidityProviders(poolId, providerCompensation);
             } else {
                 winnings[user] += payout;
             }
@@ -152,18 +135,11 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         delete vrfRequests[requestId];
     }
 
-    function compensateLiquidityProviders(PoolId poolId, uint256 amount) internal {
-        // Logic to compensate liquidity providers from the pot
-        slotMachines[poolId].pot -= amount;
-        // Add any LP-specific compensation logic here
-    }
-
     function claimWinnings() external {
         uint256 amount = winnings[msg.sender];
         require(amount > 0, "No winnings to claim");
 
         winnings[msg.sender] = 0;
-        // Implement token transfer logic (e.g., ERC20 transfer)
     }
 
     function getSlotMachine(PoolId poolId) external view returns (uint256 minBet, uint256 pot) {
