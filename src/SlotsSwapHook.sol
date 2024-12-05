@@ -1,9 +1,10 @@
+pragma solidity ^0.8.26;
+
 import "./CasinoLib.sol";
 import {BaseHook} from "v4-periphery/src/base/hooks/BaseHook.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-
 import {console} from "forge-std/console.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
@@ -24,6 +25,7 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
     mapping(address => uint256) public userLosses; // User losses
     mapping(uint256 => address) public vrfRequests; // Map VRF requestId to user
     mapping(uint256 => PoolId) public requestToPoolId; // Map VRF requestId to PoolId
+    mapping(uint256 => bool) public requestIdResultFulfilled;
 
     uint256 public lastRequestId;
 
@@ -73,7 +75,6 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         if (slotMachines[poolId].minBet == 0) {
             slotMachines[poolId] = CasinoLib.SlotMachine({minBet: 0.001 ether, pot: 10e6});
         }
-
         return this.beforeInitialize.selector;
     }
 
@@ -87,23 +88,21 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         PoolId poolId = key.toId();
         require(slotMachines[poolId].minBet > 0, "Slot machine not initialized");
 
-        int256 betAmount = params.amountSpecified;
-        require(betAmount >= 0, "Bet amount must be non-negative");
+        uint256 betAmount = uint256(params.amountSpecified);
+        require(betAmount >= slotMachines[poolId].minBet, "Bet amount too small");
 
-        require(uint256(betAmount) >= slotMachines[poolId].minBet, "Bet amount too small");
-
-        uint256 potContribution = uint256(betAmount) * 70 / 100; // 70% to pot
-        uint256 providerCompensation = uint256(betAmount) * 20 / 100; // 20% to providers
-        uint256 casinoFee = uint256(betAmount) * 10 / 100; // 10% fee
+        uint256 potContribution = (betAmount * 70) / 100; // 70% to pot
+        uint256 providerCompensation = (betAmount * 20) / 100; // 20% to providers
+        uint256 casinoFee = (betAmount * 10) / 100; // 10% fee
 
         slotMachines[poolId].pot += potContribution;
 
         uint256 requestId = COORDINATOR.requestRandomWords(keyHash, subscriptionId, 3, callbackGasLimit, 1);
         vrfRequests[requestId] = sender; // Map requestId to user
-        requestToPoolId[requestId] = poolId; // Map requestId to PoolId
+        requestToPoolId[requestId] = poolId;
         lastRequestId = requestId;
 
-        emit RandomnessRequested(requestId, sender, uint256(betAmount));
+        emit RandomnessRequested(requestId, sender, betAmount);
 
         return (this.afterSwap.selector, 0);
     }
@@ -122,23 +121,18 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
             userLosses[user] += lostAmount;
             emit UserLosses(user, lostAmount);
         } else {
-            if (CasinoLib.isJackpot(rollValue)) {
-                uint256 providerCompensation = payout / 10; // 10% to providers
-                winnings[user] += payout - providerCompensation;
-            } else {
-                winnings[user] += payout;
-            }
+            winnings[user] += payout;
             emit UserWinnings(user, payout);
         }
 
         emit RandomnessFulfilled(requestId, user, payout);
+        requestIdResultFulfilled[requestId] = true;
         delete vrfRequests[requestId];
     }
 
     function claimWinnings() external {
         uint256 amount = winnings[msg.sender];
         require(amount > 0, "No winnings to claim");
-
         winnings[msg.sender] = 0;
     }
 

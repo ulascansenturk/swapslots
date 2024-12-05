@@ -6,23 +6,34 @@ import {LibString} from "solmate/src/utils/LibString.sol";
 library CasinoLib {
     using LibString for uint256;
 
+    // Constants
     uint8 public constant NUM_COLS_ROWS = 3;
     uint8 public constant NUM_VALUES = 10;
     uint256 private constant SCALAR = 10 ** 9;
     uint256 public constant BASE_MULTIPLIER = 6;
     uint256 public constant JACKPOT_DIGIT = 7;
 
+    // Structs
     struct SlotMachine {
         uint256 minBet;
         uint256 pot;
     }
 
+    // Events
+    event SlotResult(address indexed user, bool isWin, uint256 payout);
+
+    /**
+     * @notice Calculates the result of a slot pull.
+     * @param betAmount The amount bet by the user.
+     * @param randomNums The generated random numbers.
+     * @return payout The payout amount.
+     * @return rollValue The rolled value for the slot pull.
+     */
     function calculateSlotPull(uint256 betAmount, uint8[NUM_COLS_ROWS] memory randomNums)
         internal
-        pure
         returns (uint256 payout, uint256 rollValue)
     {
-        require(NUM_COLS_ROWS % 2 == 1, "NUM_COLS_ROWS must be odd because the middle row is special.");
+        require(NUM_COLS_ROWS % 2 == 1, "NUM_COLS_ROWS must be odd (middle row is special).");
 
         uint256 multiplier = BASE_MULTIPLIER;
         uint8 middleRowIndex = _getMiddleRowIndex();
@@ -30,6 +41,7 @@ library CasinoLib {
 
         uint256 diagonalDownValue = _extractNumberDiagonalDown(rollValue);
         uint256 diagonalUpValue = _extractNumberDiagonalUp(rollValue);
+
         if (_isNumberRepeating(diagonalDownValue)) {
             multiplier = _applyDiagonalMultiplier(multiplier);
         }
@@ -55,16 +67,20 @@ library CasinoLib {
         }
 
         if (multiplier == BASE_MULTIPLIER) {
-            // multiplier never increased, which means no win
+            // No win scenario
             multiplier = 0;
         }
 
-        payout = (betAmount * multiplier);
+        payout = betAmount * multiplier;
+
+        emit SlotResult(msg.sender, multiplier > 0, payout);
     }
 
-    /// Generate slot numbers using external randomness
-    /// @param randomWord A single random word from Chainlink VRF
-    /// @return randomNums An array of generated numbers for the slot machine
+    /**
+     * @notice Generates slot numbers using external randomness.
+     * @param randomWord A single random word from Chainlink VRF.
+     * @return randomNums An array of generated numbers for the slot machine.
+     */
     function generateSlotNumbers(uint256 randomWord) internal pure returns (uint8[NUM_COLS_ROWS] memory randomNums) {
         for (uint8 i = 0; i < NUM_COLS_ROWS; i++) {
             randomNums[i] = uint8(randomWord % NUM_VALUES);
@@ -72,16 +88,8 @@ library CasinoLib {
         }
     }
 
-    /**
-     * Creates a uint256 comprised of ones.
-     * @param numDigits The number of digits to create. Must be > 0 else reverts.
-     * @return mask uint256 with `numDigits` ones.
-     *
-     *  ```
-     *  require(_oneMask(3) == 111);
-     *  require(_oneMask(8) == 11111111);
-     *  ```
-     */
+    // Internal helpers for slot mechanics
+
     function _oneMask(uint8 numDigits) internal pure returns (uint256 mask) {
         require(numDigits > 0, "numDigits must be > 0");
         for (uint256 i = 0; i < numDigits; i++) {
@@ -93,7 +101,6 @@ library CasinoLib {
         return value % _oneMask(NUM_COLS_ROWS) == 0;
     }
 
-    /// A jackpot is all JACKPOT_DIGITs in a row.
     function isJackpot(uint256 value) internal pure returns (bool) {
         return value == (_oneMask(NUM_COLS_ROWS) * JACKPOT_DIGIT);
     }
@@ -114,12 +121,11 @@ library CasinoLib {
         returns (uint256 number)
     {
         if (columnIndex % 2 == 0) {
-            // even digits +1 per row
+            // Even digits +1 per row
             number += ((baseNumber + rowIndex) % NUM_VALUES) * (NUM_VALUES ** (NUM_COLS_ROWS - columnIndex - 1));
         } else {
-            // odd digits -1 per row
+            // Odd digits -1 per row
             if (baseNumber < (NUM_COLS_ROWS - 1)) {
-                // round robin
                 baseNumber += NUM_VALUES;
             }
             number += ((baseNumber - rowIndex) % NUM_VALUES) * (NUM_VALUES ** (NUM_COLS_ROWS - columnIndex - 1));
