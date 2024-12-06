@@ -113,7 +113,7 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
         require(user != address(0), "Invalid VRF request");
 
         uint8[3] memory slotNumbers = CasinoLib.generateSlotNumbers(randomWords[0]);
-        (uint256 payout, uint256 rollValue) = CasinoLib.calculateSlotPull(slotMachines[poolId].minBet, slotNumbers);
+        (uint256 payout,) = CasinoLib.calculateSlotPull(slotMachines[poolId].minBet, slotNumbers);
 
         if (payout == 0) {
             uint256 lostAmount = slotMachines[poolId].minBet;
@@ -133,7 +133,13 @@ contract SlotsSwapHook is BaseHook, VRFConsumerBaseV2 {
     function claimWinnings() external {
         uint256 amount = winnings[msg.sender];
         require(amount > 0, "No winnings to claim");
+
         winnings[msg.sender] = 0;
+
+        (bool success,) = msg.sender.call{value: amount}("");
+        require(success, "Winnings transfer failed");
+
+        emit UserWinnings(msg.sender, 0); // Emit event indicating winnings claimed
     }
 
     function getSlotMachine(PoolId poolId) external view returns (uint256 minBet, uint256 pot) {
